@@ -14,7 +14,9 @@ const SPLITS = [
   { id: "push_pull_legs", name: "Push · Pull · Legs", tag: "PPL", desc: "Classic hypertrophy split", freq: "6 days" },
   { id: "upper_lower", name: "Upper · Lower", tag: "U/L", desc: "Balanced 4-day frequency", freq: "4 days" },
   { id: "bro", name: "Bro Split", tag: "BRO", desc: "One muscle per day", freq: "5 days" },
+  { id: "four_day", name: "4-Day Split", tag: "4D", desc: "Chest+Tri, Back+Bi, Legs, Sh+Core", freq: "4 days" },
   { id: "full_body", name: "Full Body", tag: "FB", desc: "3x/week compound focus", freq: "3 days" },
+  { id: "custom", name: "Custom", tag: "CUSTOM", desc: "Build your own weekly plan", freq: "You choose" },
 ];
 
 export default function WorkoutsScreen({ onNavigate }: { onNavigate: (t: string) => void }) {

@@ -49,36 +49,14 @@
 <script>
 // Exercise rules — angle thresholds
 const EXERCISE_RULES = {
-  sq: { // squat
-    name: "Squat", primaryJoint: "knee",
-    depth: { min: 70, max: 110 },        // knee angle at bottom
-    kneeValgus: { maxOffset: 0.06 },     // knee-x vs ankle-x normalized
-    backAngle: { min: 30, max: 90 }
-  },
-  bp: { // bench press (side view)
-    name: "Bench Press", primaryJoint: "elbow",
-    elbow: { min: 60, max: 170 }
-  },
-  pu: { // pull-up
-    name: "Pull-Up", primaryJoint: "elbow",
-    elbow: { min: 40, max: 175 }
-  },
-  op: { // overhead press
-    name: "Overhead Press", primaryJoint: "elbow",
-    elbow: { min: 60, max: 175 }
-  },
-  dl: { // deadlift
-    name: "Deadlift", primaryJoint: "hip",
-    backAngle: { min: 20, max: 90 }
-  },
-  lg: { // lunge
-    name: "Lunge", primaryJoint: "knee",
-    depth: { min: 80, max: 120 }
-  },
-  pl: { // plank
-    name: "Plank", primaryJoint: "hip",
-    hipAngle: { min: 160, max: 195 }
-  }
+  sq: { name: "Squat", primaryJoint: "knee", depthMin: 70, depthMax: 110 },
+  bp: { name: "Bench Press", primaryJoint: "elbow", elbowMin: 60, elbowMax: 170 },
+  pu: { name: "Pull-Up", primaryJoint: "elbow", elbowMin: 40, elbowMax: 175 },
+  op: { name: "Overhead Press", primaryJoint: "elbow", elbowMin: 60, elbowMax: 175 },
+  dl: { name: "Deadlift", primaryJoint: "hip", backMin: 20, backMax: 90 },
+  lg: { name: "Lunge", primaryJoint: "knee", depthMin: 80, depthMax: 120 },
+  pl: { name: "Plank", primaryJoint: "hip", hipMin: 160, hipMax: 195 },
+  pushup: { name: "Push-Up", primaryJoint: "elbow", elbowMin: 70, elbowMax: 175 },
 };
 
 let currentExercise = "sq";
@@ -124,30 +102,33 @@ function analyze(lm) {
   let primaryAngle = 180;
   const badJoints = new Set();
 
-  if (rules.depth || currentExercise === "sq" || currentExercise === "lg") {
-    // Knee angle both sides average
-    const lk = angle(lm[L.LHIP], lm[L.LKN], lm[L.LANK]);
-    const rk = angle(lm[L.RHIP], lm[L.RKN], lm[L.RANK]);
-    primaryAngle = (lk + rk) / 2;
+  // Shared helpers
+  const avgKnee = () => (angle(lm[L.LHIP], lm[L.LKN], lm[L.LANK]) + angle(lm[L.RHIP], lm[L.RKN], lm[L.RANK])) / 2;
+  const avgElbow = () => (angle(lm[L.LSH], lm[L.LEL], lm[L.LWR]) + angle(lm[L.RSH], lm[L.REL], lm[L.RWR])) / 2;
+  const avgHipAlign = () => (angle(lm[L.LSH], lm[L.LHIP], lm[L.LANK]) + angle(lm[L.RSH], lm[L.RHIP], lm[L.RANK])) / 2;
 
-    // Valgus check: knee X vs ankle X (mirror-corrected)
+  if (currentExercise === "sq" || currentExercise === "lg") {
+    primaryAngle = avgKnee();
     if (currentExercise === "sq") {
-      const lValgus = lm[L.LKN].x > lm[L.LANK].x + 0.04; // knee caving in (past ankle)
+      const lValgus = lm[L.LKN].x > lm[L.LANK].x + 0.04;
       const rValgus = lm[L.RKN].x < lm[L.RANK].x - 0.04;
       if (lValgus || rValgus) {
         faults.push("Knee caving in — push knees out");
         if (lValgus) { badJoints.add(L.LKN); badJoints.add(L.LANK); }
         if (rValgus) { badJoints.add(L.RKN); badJoints.add(L.RANK); }
       }
-      if (primaryAngle > 130 && phase === "down") {
-        // not going deep enough — only warn if trying to go down
+    }
+    if (currentExercise === "lg") {
+      // Front knee past toe (assume left is front on odd tick)
+      const front = lm[L.LKN].y > lm[L.RKN].y ? L.LKN : L.RKN;
+      const frontAnk = front === L.LKN ? L.LANK : L.RANK;
+      if (lm[front].x > lm[frontAnk].x + 0.08) {
+        faults.push("Front knee past toe — shorter step");
+        badJoints.add(front);
       }
     }
   } else if (currentExercise === "bp" || currentExercise === "pu" || currentExercise === "op") {
-    const le = angle(lm[L.LSH], lm[L.LEL], lm[L.LWR]);
-    const re = angle(lm[L.RSH], lm[L.REL], lm[L.RWR]);
-    primaryAngle = (le + re) / 2;
-    // Elbow flare on bench: elbow way above shoulder line
+    primaryAngle = avgElbow();
     if (currentExercise === "bp") {
       const flareL = lm[L.LEL].y < lm[L.LSH].y - 0.06;
       const flareR = lm[L.REL].y < lm[L.RSH].y - 0.06;
@@ -156,29 +137,47 @@ function analyze(lm) {
         badJoints.add(L.LEL); badJoints.add(L.REL);
       }
     }
+    if (currentExercise === "pu") {
+      // Kip detection: shoulder x-swing
+      // (approx — real impl would track over frames)
+      if (primaryAngle > 155 && phase === "down") {
+        // ok — full extension
+      }
+    }
+  } else if (currentExercise === "pushup") {
+    primaryAngle = avgElbow();
+    const hipAlign = avgHipAlign();
+    if (hipAlign < rules.hipMin) {
+      faults.push("Hips sagging — engage glutes and brace core");
+      badJoints.add(L.LHIP); badJoints.add(L.RHIP);
+    } else if (hipAlign > rules.hipMax) {
+      faults.push("Hips piking — lower them, brace core");
+      badJoints.add(L.LHIP); badJoints.add(L.RHIP);
+    }
+    // Elbow flare on push-up
+    const flareL = lm[L.LEL].y < lm[L.LSH].y - 0.05;
+    const flareR = lm[L.REL].y < lm[L.RSH].y - 0.05;
+    if (flareL || flareR) {
+      faults.push("Elbows flaring — 45° to body");
+      badJoints.add(L.LEL); badJoints.add(L.REL);
+    }
   } else if (currentExercise === "dl") {
-    // Back angle: shoulder-hip-knee
     const lb = angle(lm[L.LSH], lm[L.LHIP], lm[L.LKN]);
     const rb = angle(lm[L.RSH], lm[L.RHIP], lm[L.RKN]);
     primaryAngle = (lb + rb) / 2;
-    // Rounded back proxy: shoulder-hip vertical vs vertical
     const spineTop = { x: (lm[L.LSH].x + lm[L.RSH].x)/2, y: (lm[L.LSH].y + lm[L.RSH].y)/2 };
     const spineMid = { x: (lm[L.LHIP].x + lm[L.RHIP].x)/2, y: (lm[L.LHIP].y + lm[L.RHIP].y)/2 };
     const spineAngle = Math.atan2(spineTop.y - spineMid.y, spineTop.x - spineMid.x) * 180/Math.PI;
-    // If back too horizontal + rounding pattern
     if (Math.abs(spineAngle) < 30 && primaryAngle < 100) {
       faults.push("Back rounding — brace and lift chest");
       badJoints.add(L.LSH); badJoints.add(L.RSH);
     }
   } else if (currentExercise === "pl") {
-    // Hip sag/pike: shoulder-hip-ankle should be ~180
-    const lh = angle(lm[L.LSH], lm[L.LHIP], lm[L.LANK]);
-    const rh = angle(lm[L.RSH], lm[L.RHIP], lm[L.RANK]);
-    primaryAngle = (lh + rh) / 2;
-    if (primaryAngle < 160) {
+    primaryAngle = avgHipAlign();
+    if (primaryAngle < rules.hipMin) {
       faults.push("Hips sagging — engage glutes");
       badJoints.add(L.LHIP); badJoints.add(L.RHIP);
-    } else if (primaryAngle > 200) {
+    } else if (primaryAngle > rules.hipMax) {
       faults.push("Hips piked — lower them");
       badJoints.add(L.LHIP); badJoints.add(L.RHIP);
     }

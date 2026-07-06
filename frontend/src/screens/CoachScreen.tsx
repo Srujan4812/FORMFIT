@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, KeyboardAvoidingView, Platform, Animated } from "react-native";
+import Markdown from "react-native-markdown-display";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -91,7 +92,11 @@ export default function CoachScreen() {
                 {m.role === "user" && (
                   <LinearGradient colors={gradient.primary} start={{x:0,y:0}} end={{x:1,y:1}} style={StyleSheet.absoluteFill} />
                 )}
-                <Text style={{ color: m.role === "user" ? "#0B0B14" : colors.text, lineHeight: 20 }}>{m.content}</Text>
+                {m.role === "user" ? (
+                  <Text style={{ color: "#0B0B14", lineHeight: 20 }}>{m.content}</Text>
+                ) : (
+                  <Markdown style={mdStyles as any}>{String(m.content)}</Markdown>
+                )}
               </View>
             </View>
           ))}
@@ -141,8 +146,7 @@ export default function CoachScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: spacing.lg },
-  orb: {
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: spacing.lg },  orb: {
     width: 44, height: 44, borderRadius: 22, overflow: "hidden",
     alignItems: "center", justifyContent: "center",
     shadowColor: colors.magenta, shadowOpacity: 0.8, shadowRadius: 15, elevation: 10,
@@ -182,3 +186,20 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
 });
+
+const mdStyles = {
+  body: { color: colors.text, fontSize: 15, lineHeight: 22 },
+  paragraph: { color: colors.text, marginTop: 0, marginBottom: 6 },
+  strong: { color: colors.cyan, fontWeight: "700" as const },
+  em: { color: colors.magenta, fontStyle: "italic" as const },
+  bullet_list: { marginVertical: 4 },
+  ordered_list: { marginVertical: 4 },
+  list_item: { color: colors.text, marginVertical: 2 },
+  code_inline: { color: colors.cyan, backgroundColor: "rgba(34,211,238,0.1)", paddingHorizontal: 4, borderRadius: 4 },
+  code_block: { color: colors.text, backgroundColor: "rgba(11,11,20,0.6)", padding: 8, borderRadius: 8 },
+  heading1: { color: colors.text, fontSize: 20, fontWeight: "700" as const, marginTop: 6, marginBottom: 4 },
+  heading2: { color: colors.text, fontSize: 17, fontWeight: "700" as const, marginTop: 6, marginBottom: 4 },
+  heading3: { color: colors.text, fontSize: 15, fontWeight: "700" as const, marginTop: 4, marginBottom: 2 },
+  link: { color: colors.cyan },
+  hr: { backgroundColor: "rgba(139,92,246,0.3)", height: 1 },
+};

@@ -11,12 +11,15 @@ import { api } from "@/src/api";
 const BACKEND = process.env.EXPO_PUBLIC_BACKEND_URL;
 
 const EXERCISE_CODES: Record<string, string> = {
-  sq: "sq", dl: "dl", bp: "bp", pu: "pu", op: "op", lg: "lg", pl: "pl",
-  rd: "dl", rw: "dl", cu: "bp", tr: "bp", hp: "sq",
+  sq: "sq", sq_bw: "sq", dl: "dl", bp: "bp", pu: "pu", op: "op", lg: "lg", lg_bw: "lg", pl: "pl",
+  pushup: "pushup", pu_wall: "pushup",
+  rd: "dl", rw: "bp", cu: "bp", tr: "bp", hp: "sq", gb: "sq", cu_p: "pu", pu_assist: "pu",
+  sit: "pl", mc: "pl", burp: "sq", step: "lg",
 };
 
 const CHIPS = [
   { id: "sq", label: "Squat" },
+  { id: "pushup", label: "Push-Up" },
   { id: "dl", label: "Deadlift" },
   { id: "bp", label: "Bench" },
   { id: "pu", label: "Pull-Up" },
