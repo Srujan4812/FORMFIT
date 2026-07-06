@@ -27,15 +27,16 @@ export const api = {
   me: () => req("/auth/me"),
   updateProfile: (b: any) => req("/profile", { method: "PUT", body: JSON.stringify(b) }),
 
-  exercises: (muscle?: string, q?: string) => {
+  exercises: (muscle?: string, q?: string, beginner?: boolean) => {
     const p = new URLSearchParams();
     if (muscle) p.append("muscle", muscle);
     if (q) p.append("q", q);
+    if (beginner) p.append("beginner", "true");
     return req(`/exercises${p.toString() ? "?" + p.toString() : ""}`);
   },
   exercise: (id: string) => req(`/exercises/${id}`),
-  split: (s: string) => req(`/splits/${s}`),
-  selectSplit: (s: string) => req("/splits/select", { method: "POST", body: JSON.stringify({ split: s }) }),
+  split: (s: string, days?: number) => req(`/splits/${s}${days ? `?days=${days}` : ""}`),
+  selectSplit: (s: string, days?: number) => req("/splits/select", { method: "POST", body: JSON.stringify({ split: s, days_per_week: days }) }),
 
   workouts: () => req("/workouts"),
   createWorkout: (b: any) => req("/workouts", { method: "POST", body: JSON.stringify(b) }),
@@ -63,6 +64,11 @@ export const api = {
   scanFood: (image_base64: string) =>
     req("/nutrition/scan", { method: "POST", body: JSON.stringify({ image_base64 }) }),
   logFood: (b: any) => req("/nutrition/log-food", { method: "POST", body: JSON.stringify(b) }),
+  deleteMeal: (date: string, name: string, time?: string) =>
+    req("/nutrition/delete-meal", { method: "POST", body: JSON.stringify({ date, name, time }) }),
+  getTargets: () => req("/nutrition/targets"),
+  setGoal: (goal: string) => req("/nutrition/goal", { method: "PUT", body: JSON.stringify({ goal }) }),
+  overrideTargets: (b: any) => req("/nutrition/targets", { method: "PUT", body: JSON.stringify(b) }),
 };
 
 export async function saveToken(t: string) { await AsyncStorage.setItem("ff_token", t); }

@@ -19,19 +19,34 @@ const QUICK_FOODS = [
 ];
 
 export default function NutritionScreen() {
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
   const [data, setData] = useState<any>({ calories: 0, protein: 0, carbs: 0, fats: 0, water_ml: 0, meals: [] });
   const [showAdd, setShowAdd] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<any>(null);
   const [manualForm, setManualForm] = useState<any>({ name: "", calories: "", protein: "", carbs: "", fats: "" });
   const [manualMode, setManualMode] = useState(false);
+  const [targets, setTargets] = useState<any>(null);
+  const [confirmDelete, setConfirmDelete] = useState<any>(null);
+  const [showGoal, setShowGoal] = useState(false);
 
-  const target = { calories: 2400, protein: 180, carbs: 260, fats: 70, water: 3000 };
   const goal = user?.goal || "maintain";
 
-  const load = async () => { try { setData(await api.nutritionToday()); } catch {} };
+  const load = async () => {
+    try {
+      const [n, t] = await Promise.all([api.nutritionToday(), api.getTargets()]);
+      setData(n); setTargets(t);
+    } catch {}
+  };
   useEffect(() => { load(); }, []);
+
+  const target = {
+    calories: targets?.calorie_target || 2400,
+    protein: targets?.protein_target || 180,
+    carbs: targets?.carbs_target || 260,
+    fats: targets?.fats_target || 70,
+    water: 3000,
+  };
 
   const logQuick = async (food: any) => {
     await api.logFood(food);
@@ -103,12 +118,35 @@ export default function NutritionScreen() {
     await load();
   };
 
+  const doDelete = async () => {
+    if (!confirmDelete) return;
+    const today = new Date().toISOString().slice(0, 10);
+    await api.deleteMeal(today, confirmDelete.name, confirmDelete.time);
+    setConfirmDelete(null);
+    await load();
+  };
+
+  const changeGoal = async (g: string) => {
+    await api.setGoal(g);
+    await refresh();
+    await load();
+    setShowGoal(false);
+  };
+
   return (
     <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 160 }}>
-        <View style={{ marginBottom: spacing.md }}>
-          <Text style={{ color: colors.textDim, fontSize: 11, letterSpacing: 3 }}>FUEL</Text>
-          <H1>Cosmic Macros</H1>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: spacing.md }}>
+          <View>
+            <Text style={{ color: colors.textDim, fontSize: 11, letterSpacing: 3 }}>FUEL</Text>
+            <H1>Cosmic Macros</H1>
+          </View>
+          <Pressable style={styles.goalPill} onPress={() => setShowGoal(true)} testID="goal-picker">
+            <Ionicons name="flag" size={14} color={colors.magenta} />
+            <Text style={{ color: colors.text, fontWeight: "800", fontSize: 12, marginLeft: 6, letterSpacing: 1 }}>
+              {goal === "cut" ? "CUTTING" : goal === "bulk" ? "BULKING" : "MAINTAIN"}
+            </Text>
+          </Pressable>
         </View>
 
         <GlassCard>
@@ -117,7 +155,12 @@ export default function NutritionScreen() {
             <View style={{ flex: 1 }}>
               <Text style={{ color: colors.textDim, fontSize: 11, letterSpacing: 2 }}>REMAINING</Text>
               <Text style={styles.remaining}>{Math.max(0, target.calories - data.calories)}</Text>
-              <Text style={{ color: colors.textDim, fontSize: 11 }}>kcal · {goal.toUpperCase()}</Text>
+              <Text style={{ color: colors.textDim, fontSize: 11 }}>of {target.calories} kcal</Text>
+              {targets?.method && (
+                <Text style={{ color: colors.textFaint, fontSize: 10, marginTop: 4 }}>
+                  BMR {targets.bmr} · TDEE {targets.tdee} · {targets.method}
+                </Text>
+              )}
             </View>
           </View>
           <View style={styles.macroRow}>
@@ -155,7 +198,10 @@ export default function NutritionScreen() {
                     <Text style={{ color: colors.text, fontWeight: "600" }}>{m.name}</Text>
                     {m.time && <Text style={{ color: colors.textDim, fontSize: 11 }}>{m.time}</Text>}
                   </View>
-                  <Text style={{ color: colors.cyan, fontWeight: "700" }}>{m.calories} kcal</Text>
+                  <Text style={{ color: colors.cyan, fontWeight: "700", marginRight: 10 }}>{m.calories} kcal</Text>
+                  <Pressable onPress={() => setConfirmDelete(m)} style={styles.trash} testID={`del-meal-${i}`}>
+                    <Ionicons name="trash-outline" size={16} color={colors.red} />
+                  </Pressable>
                 </View>
               ))}
             </GlassCard>
@@ -288,6 +334,52 @@ export default function NutritionScreen() {
           </View>
         </View>
       </Modal>
+      {/* Goal picker */}
+      <Modal visible={showGoal} transparent animationType="slide" onRequestClose={() => setShowGoal(false)}>
+        <View style={styles.modalBg}>
+          <View style={styles.sheet}>
+            <View style={styles.grabber} />
+            <H2 style={{ marginBottom: 6 }}>Your goal</H2>
+            <Text style={{ color: colors.textDim, marginBottom: spacing.lg, fontSize: 12 }}>
+              We'll recalculate your calorie + macro targets from your body stats using Katch-McArdle.
+            </Text>
+            {[
+              { id: "cut", label: "Cutting", desc: "Lose fat (TDEE − 500)" },
+              { id: "maintain", label: "Maintaining", desc: "Hold current physique" },
+              { id: "bulk", label: "Bulking", desc: "Gain lean muscle (TDEE + 400)" },
+            ].map(g => (
+              <Pressable key={g.id} onPress={() => changeGoal(g.id)}
+                style={[styles.actionRow, goal === g.id && { borderColor: colors.cyan, backgroundColor: "rgba(34,211,238,0.08)" }]}
+                testID={`goal-${g.id}`}>
+                <View style={[styles.actionIcon, { backgroundColor: "rgba(232,121,249,0.15)" }]}>
+                  <Ionicons name={g.id === "cut" ? "trending-down" : g.id === "bulk" ? "trending-up" : "remove"} size={22} color={colors.magenta} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.text, fontWeight: "700" }}>{g.label}</Text>
+                  <Text style={{ color: colors.textDim, fontSize: 12 }}>{g.desc}</Text>
+                </View>
+                {goal === g.id && <Ionicons name="checkmark-circle" size={22} color={colors.cyan} />}
+              </Pressable>
+            ))}
+            <GhostButton label="Close" onPress={() => setShowGoal(false)} style={{ marginTop: spacing.md }} testID="goal-close" />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delete meal confirm */}
+      <Modal visible={!!confirmDelete} transparent animationType="fade" onRequestClose={() => setConfirmDelete(null)}>
+        <View style={[styles.modalBg, { justifyContent: "center", padding: spacing.xl }]}>
+          <View style={[styles.sheet, { borderRadius: radius.xl, paddingBottom: spacing.xl }]}>
+            <Ionicons name="warning" size={32} color={colors.red} style={{ alignSelf: "center", marginBottom: 8 }} />
+            <H2 style={{ textAlign: "center", marginBottom: 8 }}>Remove meal?</H2>
+            <Text style={{ color: colors.textDim, textAlign: "center", marginBottom: spacing.lg }}>
+              {confirmDelete?.name} ({confirmDelete?.calories} kcal){"\n"}will be removed from today's log.
+            </Text>
+            <NeoButton label="Remove" icon="trash" onPress={doDelete} testID="confirm-delete" />
+            <GhostButton label="Cancel" onPress={() => setConfirmDelete(null)} style={{ marginTop: 8 }} testID="cancel-delete" />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -364,6 +456,17 @@ const styles = StyleSheet.create({
     paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "rgba(139,92,246,0.12)",
   },
   foodDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.cyan },
+  trash: {
+    width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: "rgba(244,63,94,0.35)",
+    backgroundColor: "rgba(244,63,94,0.08)",
+  },
+  goalPill: {
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.pill,
+    borderWidth: 1, borderColor: "rgba(232,121,249,0.4)",
+    backgroundColor: "rgba(232,121,249,0.10)",
+  },
   fab: {
     position: "absolute", right: 20, bottom: 110,
     width: 60, height: 60, borderRadius: 30, overflow: "hidden",

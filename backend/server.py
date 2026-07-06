@@ -14,7 +14,6 @@ from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Any, Dict
 from datetime import datetime, timezone, timedelta
-
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -103,6 +102,21 @@ class FoodLogReq(BaseModel):
     fats: float = 0
     portion: Optional[str] = None
 
+class DeleteMealReq(BaseModel):
+    date: str  # yyyy-mm-dd
+    name: str
+    time: Optional[str] = None
+
+class GoalReq(BaseModel):
+    goal: str  # cut / maintain / bulk
+
+class TargetsOverrideReq(BaseModel):
+    calorie_target: Optional[int] = None
+    protein_target: Optional[int] = None
+    carbs_target: Optional[int] = None
+    fats_target: Optional[int] = None
+    reset: bool = False
+
 # ---------- Auth ----------
 def hash_pw(p: str) -> str:
     return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
@@ -176,96 +190,133 @@ async def update_profile(body: ProfileUpdate, user=Depends(get_user)):
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
     return u
 
+def _media(slug: str, yt: str) -> dict:
+    """Free Exercise DB (yuhonas/free-exercise-db) image URLs — 2 frames per exercise."""
+    base = "https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises"
+    return {
+        "image_frames": [f"{base}/{slug}/0.jpg", f"{base}/{slug}/1.jpg"],
+        "youtube_query": yt,
+    }
+
 # ----- Exercise library (seeded) -----
 EXERCISES_SEED = [
     # Compounds
     {"id": "sq", "name": "Barbell Back Squat", "muscle_group": "Legs", "equipment": "Barbell",
      "cues": ["Chest up", "Knees track over toes", "Depth: hip crease below knee"],
-     "form_rules": {"exercise": "sq"}, "difficulty": "Advanced", "beginner_friendly": False},
+     "form_rules": {"exercise": "sq"}, "difficulty": "Advanced", "beginner_friendly": False,
+     **_media("Barbell_Squat", "barbell back squat proper form tutorial")},
     {"id": "sq_bw", "name": "Bodyweight Squat", "muscle_group": "Legs", "equipment": "Bodyweight",
      "cues": ["Feet shoulder width", "Sit hips back and down", "Knees track over toes"],
-     "form_rules": {"exercise": "sq"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "sq"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Bodyweight_Squat", "bodyweight squat proper form")},
     {"id": "dl", "name": "Conventional Deadlift", "muscle_group": "Back", "equipment": "Barbell",
      "cues": ["Neutral spine", "Bar over midfoot", "Drive floor away"],
-     "form_rules": {"exercise": "dl"}, "difficulty": "Advanced", "beginner_friendly": False},
+     "form_rules": {"exercise": "dl"}, "difficulty": "Advanced", "beginner_friendly": False,
+     **_media("Barbell_Deadlift", "conventional deadlift proper form")},
     {"id": "bp", "name": "Bench Press", "muscle_group": "Chest", "equipment": "Barbell",
      "cues": ["Scapula retracted", "Bar to lower chest", "Wrists stacked"],
-     "form_rules": {"exercise": "bp"}, "difficulty": "Intermediate", "beginner_friendly": False},
+     "form_rules": {"exercise": "bp"}, "difficulty": "Intermediate", "beginner_friendly": False,
+     **_media("Barbell_Bench_Press_-_Medium_Grip", "bench press proper form")},
     {"id": "pu", "name": "Pull-Up", "muscle_group": "Back", "equipment": "Bodyweight",
      "cues": ["Full hang start", "Chest to bar", "No kipping"],
-     "form_rules": {"exercise": "pu"}, "difficulty": "Intermediate", "beginner_friendly": True},
+     "form_rules": {"exercise": "pu"}, "difficulty": "Intermediate", "beginner_friendly": True,
+     **_media("Pullups", "pull up proper form tutorial")},
     {"id": "cu_p", "name": "Chin-Up", "muscle_group": "Back", "equipment": "Bodyweight",
      "cues": ["Underhand grip", "Chin over bar", "Controlled negative"],
-     "form_rules": {"exercise": "pu"}, "difficulty": "Intermediate", "beginner_friendly": True},
+     "form_rules": {"exercise": "pu"}, "difficulty": "Intermediate", "beginner_friendly": True,
+     **_media("Chin-Up", "chin up proper form")},
     {"id": "pu_assist", "name": "Assisted Pull-Up", "muscle_group": "Back", "equipment": "Machine",
      "cues": ["Same form as pull-up", "Use band or machine assist"],
-     "form_rules": {"exercise": "pu"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "pu"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Band_Assisted_Pull-Up", "assisted pull up tutorial")},
     {"id": "pushup", "name": "Push-Up", "muscle_group": "Chest", "equipment": "Bodyweight",
      "cues": ["Body straight — head to heels", "Chest to floor", "Elbows 45°"],
-     "form_rules": {"exercise": "pushup"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "pushup"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Pushups", "push up proper form tutorial")},
     {"id": "pu_wall", "name": "Wall Push-Up", "muscle_group": "Chest", "equipment": "Bodyweight",
      "cues": ["Feet ~1m from wall", "Body straight", "Full elbow extension"],
-     "form_rules": {"exercise": "pushup"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "pushup"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Decline_Push-Up", "wall push up beginner")},
     {"id": "lg", "name": "Walking Lunge", "muscle_group": "Legs", "equipment": "Dumbbell",
      "cues": ["Vertical torso", "Front knee 90°", "Step long enough"],
-     "form_rules": {"exercise": "lg"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "lg"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Dumbbell_Lunges", "walking lunge proper form")},
     {"id": "lg_bw", "name": "Bodyweight Lunge", "muscle_group": "Legs", "equipment": "Bodyweight",
      "cues": ["Step long", "Front knee tracks toe", "Back knee kisses floor"],
-     "form_rules": {"exercise": "lg"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "lg"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Bodyweight_Walking_Lunge", "bodyweight lunge tutorial")},
     {"id": "op", "name": "Overhead Press", "muscle_group": "Shoulders", "equipment": "Barbell",
      "cues": ["Glutes tight", "Bar path vertical", "Lockout overhead"],
-     "form_rules": {"exercise": "op"}, "difficulty": "Intermediate", "beginner_friendly": False},
+     "form_rules": {"exercise": "op"}, "difficulty": "Intermediate", "beginner_friendly": False,
+     **_media("Standing_Military_Press", "overhead press proper form")},
     {"id": "pl", "name": "Plank", "muscle_group": "Core", "equipment": "Bodyweight",
      "cues": ["Neutral spine", "Glutes engaged", "Shoulders over elbows"],
-     "form_rules": {"exercise": "pl"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "pl"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Plank", "plank proper form tutorial")},
     {"id": "rd", "name": "Romanian Deadlift", "muscle_group": "Legs", "equipment": "Barbell",
      "cues": ["Push hips back", "Slight knee bend", "Bar close to legs"],
-     "form_rules": {"exercise": "dl"}, "difficulty": "Intermediate", "beginner_friendly": False},
+     "form_rules": {"exercise": "dl"}, "difficulty": "Intermediate", "beginner_friendly": False,
+     **_media("Romanian_Deadlift", "romanian deadlift proper form")},
     {"id": "rw", "name": "Barbell Row", "muscle_group": "Back", "equipment": "Barbell",
      "cues": ["Flat back", "Pull to lower ribs", "Elbows tight"],
-     "form_rules": {"exercise": "bp"}, "difficulty": "Intermediate", "beginner_friendly": False},
+     "form_rules": {"exercise": "bp"}, "difficulty": "Intermediate", "beginner_friendly": False,
+     **_media("Bent_Over_Barbell_Row", "barbell row proper form")},
     {"id": "cu", "name": "Dumbbell Curl", "muscle_group": "Arms", "equipment": "Dumbbell",
      "cues": ["Elbows pinned", "Full contraction", "Slow eccentric"],
-     "form_rules": {"exercise": "bp"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "bp"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Dumbbell_Bicep_Curl", "dumbbell curl proper form")},
     {"id": "tr", "name": "Triceps Pushdown", "muscle_group": "Arms", "equipment": "Cable",
      "cues": ["Elbows fixed", "Full lockout", "Neutral wrist"],
-     "form_rules": {"exercise": "bp"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "bp"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Triceps_Pushdown", "triceps pushdown tutorial")},
     {"id": "hp", "name": "Hip Thrust", "muscle_group": "Legs", "equipment": "Barbell",
      "cues": ["Chin tucked", "Glute squeeze at top", "Ribs down"],
-     "form_rules": {"exercise": "sq"}, "difficulty": "Intermediate", "beginner_friendly": False},
+     "form_rules": {"exercise": "sq"}, "difficulty": "Intermediate", "beginner_friendly": False,
+     **_media("Barbell_Hip_Thrust", "hip thrust proper form")},
     {"id": "gb", "name": "Glute Bridge", "muscle_group": "Legs", "equipment": "Bodyweight",
      "cues": ["Feet flat", "Squeeze glutes at top", "Ribs down"],
-     "form_rules": {"exercise": "sq"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "sq"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Barbell_Glute_Bridge", "glute bridge proper form")},
     {"id": "sit", "name": "Sit-Up", "muscle_group": "Core", "equipment": "Bodyweight",
      "cues": ["Feet anchored", "Chin off chest", "Controlled descent"],
-     "form_rules": {"exercise": "pl"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "pl"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Sit-Up", "sit up proper form")},
     {"id": "mc", "name": "Mountain Climber", "muscle_group": "Core", "equipment": "Bodyweight",
      "cues": ["Plank position", "Drive knees fast", "Hips level"],
-     "form_rules": {"exercise": "pl"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "pl"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Mountain_Climbers", "mountain climber proper form")},
     {"id": "burp", "name": "Burpee", "muscle_group": "Core", "equipment": "Bodyweight",
      "cues": ["Squat down", "Kick back to plank", "Jump up explosively"],
-     "form_rules": {"exercise": "sq"}, "difficulty": "Intermediate", "beginner_friendly": False},
+     "form_rules": {"exercise": "sq"}, "difficulty": "Intermediate", "beginner_friendly": False,
+     **_media("Bodyweight_Squat", "burpee proper form tutorial")},
     {"id": "step", "name": "Step-Up", "muscle_group": "Legs", "equipment": "Bodyweight",
      "cues": ["Drive through heel", "Full extension at top", "Control descent"],
-     "form_rules": {"exercise": "lg"}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {"exercise": "lg"}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Dumbbell_Step_Ups", "step up proper form")},
     {"id": "leg_press", "name": "Leg Press", "muscle_group": "Legs", "equipment": "Machine",
      "cues": ["Feet shoulder width", "Don't lock knees", "Full range"],
-     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Leg_Press", "leg press proper form")},
     {"id": "lat_pd", "name": "Lat Pulldown", "muscle_group": "Back", "equipment": "Machine",
      "cues": ["Chest up", "Pull to upper chest", "Squeeze lats"],
-     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Wide-Grip_Lat_Pulldown", "lat pulldown proper form")},
     {"id": "seated_row", "name": "Seated Cable Row", "muscle_group": "Back", "equipment": "Machine",
      "cues": ["Chest up", "Pull to lower ribs", "Squeeze scaps"],
-     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Seated_Cable_Rows", "seated cable row tutorial")},
     {"id": "leg_curl", "name": "Leg Curl", "muscle_group": "Legs", "equipment": "Machine",
      "cues": ["Full range", "Slow eccentric", "Squeeze hamstrings"],
-     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Lying_Leg_Curls", "leg curl proper form")},
     {"id": "leg_ext", "name": "Leg Extension", "muscle_group": "Legs", "equipment": "Machine",
      "cues": ["Full extension", "Slow eccentric", "Toes up"],
-     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Leg_Extensions", "leg extension proper form")},
     {"id": "calf", "name": "Calf Raise", "muscle_group": "Legs", "equipment": "Machine",
      "cues": ["Full stretch", "Peak contraction", "Slow tempo"],
-     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True},
+     "form_rules": {}, "difficulty": "Beginner", "beginner_friendly": True,
+     **_media("Standing_Calf_Raises", "calf raise proper form")},
 ]
 
 @api.get("/exercises")
@@ -838,7 +889,147 @@ async def pose_view():
     except Exception:
         return HTMLResponse("<html><body>Pose engine unavailable</body></html>", status_code=500)
 
-# ---------- Mount ----------
+# ----- Nutrition targets (TDEE / Katch-McArdle) -----
+def compute_targets(user: dict, workouts_last_7d: int) -> dict:
+    """Katch-McArdle BMR × activity multiplier, goal-adjusted, macro split."""
+    weight = user.get("weight_kg")
+    bf = user.get("body_fat_percent")
+    sex = (user.get("sex") or "male").lower()
+    goal = user.get("goal") or "maintain"
+
+    if not weight:
+        return {"ok": False, "reason": "missing weight"}
+
+    if bf is not None:
+        lbm = weight * (1 - bf / 100.0)
+        bmr = 370 + 21.6 * lbm
+        method = "Katch-McArdle"
+    else:
+        # Mifflin-St Jeor fallback
+        h = user.get("height_cm") or 175
+        age = user.get("age") or 30
+        base = 10 * weight + 6.25 * h - 5 * age
+        bmr = base + 5 if sex == "male" else base - 161
+        lbm = None
+        method = "Mifflin-St Jeor"
+
+    # Activity multiplier from workouts_last_7d
+    if user.get("activity_override"):
+        mult = user["activity_override"]
+        activity = "manual"
+    elif workouts_last_7d <= 1:
+        mult, activity = 1.375, "light"
+    elif workouts_last_7d <= 3:
+        mult, activity = 1.55, "moderate"
+    elif workouts_last_7d <= 5:
+        mult, activity = 1.725, "active"
+    else:
+        mult, activity = 1.9, "very active"
+
+    tdee = bmr * mult
+
+    if goal == "cut":
+        target = tdee - 500
+    elif goal == "bulk":
+        target = tdee + 400
+    else:
+        target = tdee
+
+    # Safe floor
+    floor = 1500 if sex == "male" else 1200
+    floored = False
+    if target < floor:
+        target = floor
+        floored = True
+
+    target = int(round(target))
+
+    # Protein: 2.2g/kg on cut, 1.8g/kg maintain, 1.6g/kg bulk
+    if goal == "cut":
+        protein_g = round(weight * 2.2)
+    elif goal == "bulk":
+        protein_g = round(weight * 1.6)
+    else:
+        protein_g = round(weight * 1.8)
+
+    protein_kcal = protein_g * 4
+    remaining = max(0, target - protein_kcal)
+    # Split remaining 55% carbs / 45% fat calories
+    carbs_g = round((remaining * 0.55) / 4)
+    fats_g = round((remaining * 0.45) / 9)
+
+    return {
+        "ok": True,
+        "method": method,
+        "lbm_kg": round(lbm, 1) if lbm else None,
+        "bmr": round(bmr),
+        "activity": activity,
+        "activity_multiplier": mult,
+        "tdee": round(tdee),
+        "goal": goal,
+        "calorie_target": target,
+        "floored": floored,
+        "protein_target": protein_g,
+        "carbs_target": carbs_g,
+        "fats_target": fats_g,
+    }
+
+async def _workouts_last_7d(user_id: str) -> int:
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    return await db.workouts.count_documents({"user_id": user_id, "date": {"$gte": since}})
+
+@api.get("/nutrition/targets")
+async def get_targets(user=Depends(get_user)):
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    override = u.get("targets_override")
+    computed = compute_targets(u, await _workouts_last_7d(user["id"]))
+    if override:
+        return {**computed, "override": True, **override}
+    return {**computed, "override": False}
+
+@api.put("/nutrition/goal")
+async def set_goal(body: GoalReq, user=Depends(get_user)):
+    if body.goal not in ("cut", "maintain", "bulk"):
+        raise HTTPException(400, "Invalid goal")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"goal": body.goal}, "$unset": {"targets_override": ""}})
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return compute_targets(u, await _workouts_last_7d(user["id"]))
+
+@api.put("/nutrition/targets")
+async def override_targets(body: TargetsOverrideReq, user=Depends(get_user)):
+    if body.reset:
+        await db.users.update_one({"id": user["id"]}, {"$unset": {"targets_override": ""}})
+    else:
+        over = {k: v for k, v in body.dict().items() if v is not None and k != "reset"}
+        if over:
+            await db.users.update_one({"id": user["id"]}, {"$set": {"targets_override": over}})
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    computed = compute_targets(u, await _workouts_last_7d(user["id"]))
+    return {**computed, "override": bool(u.get("targets_override")), **(u.get("targets_override") or {})}
+
+# ----- Delete meal -----
+@api.post("/nutrition/delete-meal")
+async def delete_meal(body: DeleteMealReq, user=Depends(get_user)):
+    # Find nutrition doc(s) for this date and remove the matching meal entry
+    docs = await db.nutrition.find({"user_id": user["id"], "date": body.date}, {"_id": 0}).to_list(100)
+    removed = 0
+    for d in docs:
+        meals = d.get("meals", []) or []
+        new_meals = []
+        for m in meals:
+            if removed == 0 and m.get("name") == body.name and (body.time is None or m.get("time") == body.time):
+                removed += 1
+                continue
+            new_meals.append(m)
+        if len(new_meals) != len(meals):
+            if not new_meals and d.get("water_ml", 0) == 0:
+                await db.nutrition.delete_one({"id": d["id"]})
+            else:
+                await db.nutrition.update_one({"id": d["id"]}, {"$set": {"meals": new_meals}})
+            break
+    return {"ok": True, "removed": removed}
+
+# ----- Mount ----------
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
