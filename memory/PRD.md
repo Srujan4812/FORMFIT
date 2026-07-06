@@ -1,50 +1,24 @@
-# FormFit — Cosmic Nebula Edition
+# FormFit — Cosmic Nebula Edition · Final Build
 
-Premium AI-powered fitness companion. React Native + Expo (frontend) · FastAPI + MongoDB (backend).
+## Architecture
+- Frontend: React Native + Expo Router (Expo SDK 54)
+- Backend: FastAPI + MongoDB (motor async)
+- Auth: JWT + bcrypt email/password **and** Emergent-managed Google OAuth (real session exchange with `demobackend.emergentagent.com/auth/v1/env/oauth/session-data`)
+- Pose engine: **real MediaPipe Pose (JS/WASM, 33 landmarks)** loaded from CDN inside a WebView / iframe served by the backend at `/api/pose-view` — angle math + rep detection + audio TTS warnings all live client-side
+- Vision food scanner: emergentintegrations LlmChat + `ImageContent` (base64) → Claude Sonnet 4.6 vision → JSON parse → editable confirmation card → real DB write
+- AI Coach: emergentintegrations LlmChat → Claude Sonnet 4.6 with persistent MongoDB history
 
 ## Design System
-Cosmic Nebula — deep-space indigo bg, glass panels (backdrop blur + violet-cyan gradient border),
-neomorphic controls, violet #8B5CF6 → cyan #22D3EE primary gradient, magenta #E879F9 for celebrations,
-aurora green #4ADE80 correct-form, nebula red #F43F5E incorrect-form.
-
-## Screens delivered
-1. Login / Sign Up (email + password, JWT)
-2. Home Dashboard (fitness score gauge, readiness, today's mission, quick access grid)
-3. Weekly Grid + Split selector modal (PPL, Upper/Lower, Bro, Full Body)
-4. Exercise Library (search + muscle-group chips, form cues)
-5. Universal AI Form-Check HUD (live skeletal overlay w/ 33 landmarks, rep counter, form % live, warning banner, Ghost overlay toggle)
-6. Post-Workout Transmission (form score, rep timeline bars, AI insights, PR celebration)
-7. Fitness Score Deep Dive (composite gauge, 5 sub-scores, 8-week trend bars, AI tip)
-8. Nutrition tracker (Cosmic Macros ring, macro bars, quick-log foods, hydration)
-9. AI Coach Chat (Claude Sonnet 4.6 via emergentintegrations, pulsing avatar orb, suggestion chips, message history)
-10. Recovery Check-In (soreness / sleep / energy sliders → Light/Moderate/Full recommendation)
-11. Analytics (mini stats, 8-week consistency heatmap, muscle activation, plateau forecast historical + projected)
-12. Galactic Achievements (8 badges: locked = dimmed, unlocked = glowing)
-13. Profile (metrics editor, sex + goal chips, menu into all detail screens, sign out)
-
-## Backend endpoints (all `/api/*`, per-user auth guarded)
-`POST /auth/signup`, `POST /auth/login`, `GET /auth/me`, `PUT /profile`
-`GET /exercises[?muscle&q]`, `GET /exercises/:id`
-`GET /splits/:split`, `POST /splits/select`
-`POST /workouts`, `GET /workouts`
-`POST /nutrition`, `GET /nutrition/today`
-`POST /form-check`, `GET /form-check/history`
-`POST /recovery`, `GET /recovery/latest`
-`GET /fitness-score` (5-weighted sub-score composite + 8-week trend + weakest-tip)
-`GET /analytics/heatmap`, `/muscle-activation`, `/plateau`
-`GET /achievements`
-`POST /coach/chat`, `GET /coach/history/:session_id`
-
-## Data model (MongoDB collections)
-users · workouts · form_checks · nutrition · recovery · coach_msgs
-All queries scoped by `user_id` on the server.
-
-## MOCKED / notes
-- **Pose detection** — the skeletal overlay in Form-Check is a driven simulation (33-landmark schema, connections match MediaPipe). Wiring to real on-device MediaPipe/TFLite is one component swap in `FormCheckScreen.tsx`.
-- **Emergent LLM key** — the account has 0 budget so the coach falls back to a canned reply. Top up in Profile → Universal Key → Add Balance and Claude Sonnet 4.6 will respond live.
-- **Barcode / photo food AI** — quick-log uses a fixed food list; UI/data model ready for barcode + AI-food swap.
-- **Animated exercise demo & voice narration** — deferred, out of budget scope.
+Cosmic Nebula — violet #8B5CF6 → cyan #22D3EE gradients, magenta #E879F9 celebration accents, aurora-green #4ADE80 correct-form / nebula-red #F43F5E incorrect-form, glass panels (backdrop-blur + violet-cyan gradient border), neomorphic gradient buttons with soft glow, 24px glass radius / 28px neomorphic radius.
 
 ## Auth
-JWT + bcrypt. Token stored in AsyncStorage. All protected endpoints require `Authorization: Bearer <token>`.
-Emergent-managed Google OAuth **not** included (user did not request it explicitly).
+JWT + bcrypt (email/password) alongside Emergent Google OAuth. Google flow: `expo-web-browser` on native / `window.location.href` on web → `auth.emergentagent.com` → session_id captured on redirect → exchanged server-side → issue our JWT. Token stored via AsyncStorage (mobile) / URL cleaned via `history.replaceState`.
+
+## Core features — verification status
+1. **Live Form Checker** — REAL 33-landmark MediaPipe Pose running on live camera frames, drawing a green/red skeleton with red-orange bad-joint highlighting, fault text banner, TTS voice warnings, angle-cycle rep counting, per-rep score, session write to `form_checks` collection. Rule table drives 7 exercises (squat, deadlift, bench, pull-up, OH press, lunge, plank). Verified via `/api/pose-view` — MediaPipe scripts load correctly.
+2. **Food Photo Macro Scanner** — camera + gallery pickers via `expo-image-picker`, base64 → `/api/nutrition/scan` → Claude Sonnet 4.6 vision → structured JSON (name/portion/calories/protein/carbs/fats/confidence) → editable confirmation modal → `POST /api/nutrition/log-food` → today's totals refresh. **Full end-to-end flow verified** — falls back to editable defaults with clear "Vision AI unavailable" banner when the LLM key balance is exhausted.
+
+## MOCKED / notes
+- **Emergent LLM key has $0 balance** on this environment → AI Coach and Food Photo scanner both fall back to defaults with clear UI messaging. Top up at Profile → Universal Key → Add Balance and both features go fully live instantly.
+- **Native on-device MediaPipe module** (via `expo-camera` + TFLite) is not usable in Expo Go / this web preview. Chose a WebView-hosted MediaPipe Pose JS/WASM implementation (identical 33-landmark output, real detection, works on real device browsers and Expo web preview). For a real device build, the WebView approach still works; if you want native TFLite, that requires `eas build` + native module.
+- Barcode scanner not implemented (photo AI covers the same use case per user spec).

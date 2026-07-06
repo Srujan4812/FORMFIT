@@ -7,6 +7,9 @@ import logging
 import uuid
 import bcrypt
 import jwt
+import base64
+import json
+import httpx
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Any, Dict
@@ -84,6 +87,20 @@ class ChatReq(BaseModel):
 
 class SplitReq(BaseModel):
     split: str  # push_pull_legs, upper_lower, bro, full_body, custom
+
+class GoogleSessionReq(BaseModel):
+    session_id: str  # from emergent auth redirect
+
+class FoodScanReq(BaseModel):
+    image_base64: str
+
+class FoodLogReq(BaseModel):
+    name: str
+    calories: int
+    protein: float = 0
+    carbs: float = 0
+    fats: float = 0
+    portion: Optional[str] = None
 
 # ---------- Auth ----------
 def hash_pw(p: str) -> str:
@@ -523,6 +540,115 @@ async def coach_chat(body: ChatReq, user=Depends(get_user)):
 async def coach_history(session_id: str, user=Depends(get_user)):
     msgs = await db.coach_msgs.find({"user_id": user["id"], "session_id": session_id}, {"_id": 0}).sort("ts", 1).to_list(200)
     return msgs
+
+# ----- Google OAuth (Emergent-managed) -----
+@api.post("/auth/google-session")
+async def google_session(body: GoogleSessionReq):
+    """Exchange emergent session_id for our JWT token + user."""
+    async with httpx.AsyncClient(timeout=15) as h:
+        r = await h.get(
+            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+            headers={"X-Session-ID": body.session_id},
+        )
+    if r.status_code != 200:
+        raise HTTPException(401, "Invalid emergent session")
+    data = r.json()
+    email = (data.get("email") or "").lower()
+    if not email:
+        raise HTTPException(400, "No email in session")
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        uid = existing["id"]
+        await db.users.update_one({"id": uid}, {"$set": {"picture": data.get("picture")}})
+    else:
+        uid = str(uuid.uuid4())
+        await db.users.insert_one({
+            "id": uid, "name": data.get("name") or email.split("@")[0],
+            "email": email, "password_hash": "",
+            "picture": data.get("picture"),
+            "height_cm": None, "weight_kg": None, "body_fat_percent": None,
+            "age": None, "sex": None, "current_split": "push_pull_legs",
+            "goal": "maintain", "streak": 0, "created_at": now_utc(),
+        })
+    u = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
+    return {"token": make_token(uid), "user": u}
+
+# ----- Food Photo Scanner (Vision LLM) -----
+FOOD_PROMPT = """You are a nutrition assistant. Identify the food(s) in this image and estimate the total for the visible portion.
+Respond ONLY with valid JSON, no other text, matching:
+{
+  "name": "concise food name (e.g. 'Grilled chicken, rice, broccoli')",
+  "portion": "portion description (e.g. '1 plate, ~350g')",
+  "calories": integer,
+  "protein": grams as number,
+  "carbs": grams as number,
+  "fats": grams as number,
+  "confidence": "low" | "medium" | "high"
+}"""
+
+@api.post("/nutrition/scan")
+async def scan_food(body: FoodScanReq, user=Depends(get_user)):
+    from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+    # strip data-url prefix if present
+    b64 = body.image_base64
+    if "," in b64 and b64.startswith("data:"):
+        b64 = b64.split(",", 1)[1]
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=f"food_{user['id']}_{uuid.uuid4().hex[:6]}",
+        system_message=FOOD_PROMPT,
+    ).with_model("anthropic", "claude-sonnet-4-6")
+    try:
+        msg = UserMessage(text="Analyze this food photo.", file_contents=[ImageContent(image_base64=b64)])
+        reply = await chat.send_message(msg)
+        text = str(reply).strip()
+        # try to extract JSON
+        if "```" in text:
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        text = text.strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            text = text[start:end + 1]
+        data = json.loads(text)
+        return {"ok": True, **data}
+    except Exception as e:
+        logging.exception("Food scan error")
+        return {
+            "ok": False, "error": str(e)[:120],
+            "name": "Mixed meal", "portion": "1 serving",
+            "calories": 500, "protein": 30, "carbs": 55, "fats": 18,
+            "confidence": "low",
+        }
+
+@api.post("/nutrition/log-food")
+async def log_food(body: FoodLogReq, user=Depends(get_user)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    meal = {
+        "name": body.name, "calories": body.calories,
+        "protein": body.protein, "carbs": body.carbs, "fats": body.fats,
+        "time": datetime.now(timezone.utc).strftime("%H:%M"),
+        "portion": body.portion,
+    }
+    doc = {"id": str(uuid.uuid4()), "user_id": user["id"], "date": today,
+           "meals": [meal], "water_ml": 0}
+    await db.nutrition.insert_one(doc)
+    return {"ok": True, "meal": meal}
+
+# ----- Pose HTML (MediaPipe wrapper served for WebView / iframe) -----
+POSE_HTML_PATH = ROOT_DIR.parent / "frontend" / "assets" / "pose.html"
+
+from fastapi.responses import HTMLResponse
+
+@api.get("/pose-view", response_class=HTMLResponse)
+async def pose_view():
+    try:
+        with open(POSE_HTML_PATH, "r") as f:
+            return HTMLResponse(f.read())
+    except Exception:
+        return HTMLResponse("<html><body>Pose engine unavailable</body></html>", status_code=500)
 
 # ---------- Mount ----------
 app.include_router(api)

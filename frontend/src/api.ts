@@ -22,6 +22,8 @@ export const api = {
     req("/auth/signup", { method: "POST", body: JSON.stringify({ name, email, password }) }),
   login: (email: string, password: string) =>
     req("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  googleSession: (session_id: string) =>
+    req("/auth/google-session", { method: "POST", body: JSON.stringify({ session_id }) }),
   me: () => req("/auth/me"),
   updateProfile: (b: any) => req("/profile", { method: "PUT", body: JSON.stringify(b) }),
 
@@ -57,6 +59,10 @@ export const api = {
   chat: (session_id: string, message: string) =>
     req("/coach/chat", { method: "POST", body: JSON.stringify({ session_id, message }) }),
   chatHistory: (session_id: string) => req(`/coach/history/${session_id}`),
+
+  scanFood: (image_base64: string) =>
+    req("/nutrition/scan", { method: "POST", body: JSON.stringify({ image_base64 }) }),
+  logFood: (b: any) => req("/nutrition/log-food", { method: "POST", body: JSON.stringify(b) }),
 };
 
 export async function saveToken(t: string) { await AsyncStorage.setItem("ff_token", t); }

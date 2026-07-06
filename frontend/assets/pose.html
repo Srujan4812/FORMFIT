@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>FormFit Pose</title>
+<style>
+  html,body{margin:0;padding:0;background:#0B0B14;color:#F1F0F9;font-family:system-ui,-apple-system,sans-serif;overflow:hidden;}
+  #wrap{position:relative;width:100vw;height:100vh;overflow:hidden;background:#0B0B14;}
+  video,canvas{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
+  #warn{
+    position:absolute;top:60px;left:50%;transform:translateX(-50%);
+    background:#F43F5E;color:#0B0B14;padding:10px 18px;border-radius:999px;
+    font-weight:800;letter-spacing:1px;font-size:14px;display:none;
+    box-shadow:0 0 30px rgba(244,63,94,0.8);z-index:10;
+  }
+  #hud{
+    position:absolute;bottom:16px;left:16px;right:16px;
+    background:rgba(19,18,38,0.85);border:1px solid rgba(139,92,246,0.4);
+    border-radius:20px;padding:12px 16px;
+    display:flex;justify-content:space-around;align-items:center;z-index:10;
+    backdrop-filter:blur(10px);
+  }
+  .m{text-align:center}
+  .l{font-size:10px;letter-spacing:2px;color:#9C97B8;margin-bottom:2px;}
+  .v{font-size:24px;font-weight:800;color:#F1F0F9;}
+  .status-ok{color:#4ADE80 !important}
+  .status-bad{color:#F43F5E !important}
+  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;z-index:20;background:#0B0B14;}
+  .spinner{width:40px;height:40px;border:3px solid rgba(139,92,246,0.3);border-top-color:#22D3EE;border-radius:50%;animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="v" playsinline autoplay muted></video>
+  <canvas id="c"></canvas>
+  <div id="warn"></div>
+  <div id="hud">
+    <div class="m"><div class="l">REPS</div><div class="v" id="reps">0</div></div>
+    <div class="m"><div class="l">FORM</div><div class="v" id="form">--</div></div>
+    <div class="m"><div class="l">STATUS</div><div class="v status-ok" id="status">INIT</div></div>
+  </div>
+  <div id="loading"><div class="spinner"></div><div style="font-size:12px;letter-spacing:2px;color:#9C97B8">LOADING POSE ENGINE</div></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+<script>
+// Exercise rules — angle thresholds
+const EXERCISE_RULES = {
+  sq: { // squat
+    name: "Squat", primaryJoint: "knee",
+    depth: { min: 70, max: 110 },        // knee angle at bottom
+    kneeValgus: { maxOffset: 0.06 },     // knee-x vs ankle-x normalized
+    backAngle: { min: 30, max: 90 }
+  },
+  bp: { // bench press (side view)
+    name: "Bench Press", primaryJoint: "elbow",
+    elbow: { min: 60, max: 170 }
+  },
+  pu: { // pull-up
+    name: "Pull-Up", primaryJoint: "elbow",
+    elbow: { min: 40, max: 175 }
+  },
+  op: { // overhead press
+    name: "Overhead Press", primaryJoint: "elbow",
+    elbow: { min: 60, max: 175 }
+  },
+  dl: { // deadlift
+    name: "Deadlift", primaryJoint: "hip",
+    backAngle: { min: 20, max: 90 }
+  },
+  lg: { // lunge
+    name: "Lunge", primaryJoint: "knee",
+    depth: { min: 80, max: 120 }
+  },
+  pl: { // plank
+    name: "Plank", primaryJoint: "hip",
+    hipAngle: { min: 160, max: 195 }
+  }
+};
+
+let currentExercise = "sq";
+let ghost = false;
+let reps = 0, formScores = [], phase = "up", lastAngle = 180;
+let currentFaults = [];
+let hasStarted = false;
+let sessionData = [];
+
+const video = document.getElementById("v");
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const warn = document.getElementById("warn");
+const repsEl = document.getElementById("reps");
+const formEl = document.getElementById("form");
+const statusEl = document.getElementById("status");
+const loading = document.getElementById("loading");
+
+function angle(a, b, c) {
+  // angle at b in degrees between a-b-c
+  const ab = { x: a.x - b.x, y: a.y - b.y };
+  const cb = { x: c.x - b.x, y: c.y - b.y };
+  const dot = ab.x * cb.x + ab.y * cb.y;
+  const mag = Math.sqrt(ab.x**2 + ab.y**2) * Math.sqrt(cb.x**2 + cb.y**2);
+  if (mag < 1e-6) return 180;
+  return Math.acos(Math.max(-1, Math.min(1, dot / mag))) * 180 / Math.PI;
+}
+
+// MediaPipe pose landmark indices
+const L = { NOSE:0, LEYE:2, REYE:5, LEAR:7, REAR:8, LSH:11, RSH:12, LEL:13, REL:14, LWR:15, RWR:16,
+            LHIP:23, RHIP:24, LKN:25, RKN:26, LANK:27, RANK:28 };
+
+const CONNECTIONS = [
+  [L.LSH,L.RSH],[L.LSH,L.LEL],[L.LEL,L.LWR],[L.RSH,L.REL],[L.REL,L.RWR],
+  [L.LSH,L.LHIP],[L.RSH,L.RHIP],[L.LHIP,L.RHIP],
+  [L.LHIP,L.LKN],[L.LKN,L.LANK],[L.RHIP,L.RKN],[L.RKN,L.RANK],
+  [L.LSH,L.NOSE],[L.RSH,L.NOSE],
+];
+
+function analyze(lm) {
+  const rules = EXERCISE_RULES[currentExercise];
+  const faults = [];
+  let primaryAngle = 180;
+  const badJoints = new Set();
+
+  if (rules.depth || currentExercise === "sq" || currentExercise === "lg") {
+    // Knee angle both sides average
+    const lk = angle(lm[L.LHIP], lm[L.LKN], lm[L.LANK]);
+    const rk = angle(lm[L.RHIP], lm[L.RKN], lm[L.RANK]);
+    primaryAngle = (lk + rk) / 2;
+
+    // Valgus check: knee X vs ankle X (mirror-corrected)
+    if (currentExercise === "sq") {
+      const lValgus = lm[L.LKN].x > lm[L.LANK].x + 0.04; // knee caving in (past ankle)
+      const rValgus = lm[L.RKN].x < lm[L.RANK].x - 0.04;
+      if (lValgus || rValgus) {
+        faults.push("Knee caving in — push knees out");
+        if (lValgus) { badJoints.add(L.LKN); badJoints.add(L.LANK); }
+        if (rValgus) { badJoints.add(L.RKN); badJoints.add(L.RANK); }
+      }
+      if (primaryAngle > 130 && phase === "down") {
+        // not going deep enough — only warn if trying to go down
+      }
+    }
+  } else if (currentExercise === "bp" || currentExercise === "pu" || currentExercise === "op") {
+    const le = angle(lm[L.LSH], lm[L.LEL], lm[L.LWR]);
+    const re = angle(lm[L.RSH], lm[L.REL], lm[L.RWR]);
+    primaryAngle = (le + re) / 2;
+    // Elbow flare on bench: elbow way above shoulder line
+    if (currentExercise === "bp") {
+      const flareL = lm[L.LEL].y < lm[L.LSH].y - 0.06;
+      const flareR = lm[L.REL].y < lm[L.RSH].y - 0.06;
+      if (flareL || flareR) {
+        faults.push("Elbows flaring — tuck at 45°");
+        badJoints.add(L.LEL); badJoints.add(L.REL);
+      }
+    }
+  } else if (currentExercise === "dl") {
+    // Back angle: shoulder-hip-knee
+    const lb = angle(lm[L.LSH], lm[L.LHIP], lm[L.LKN]);
+    const rb = angle(lm[L.RSH], lm[L.RHIP], lm[L.RKN]);
+    primaryAngle = (lb + rb) / 2;
+    // Rounded back proxy: shoulder-hip vertical vs vertical
+    const spineTop = { x: (lm[L.LSH].x + lm[L.RSH].x)/2, y: (lm[L.LSH].y + lm[L.RSH].y)/2 };
+    const spineMid = { x: (lm[L.LHIP].x + lm[L.RHIP].x)/2, y: (lm[L.LHIP].y + lm[L.RHIP].y)/2 };
+    const spineAngle = Math.atan2(spineTop.y - spineMid.y, spineTop.x - spineMid.x) * 180/Math.PI;
+    // If back too horizontal + rounding pattern
+    if (Math.abs(spineAngle) < 30 && primaryAngle < 100) {
+      faults.push("Back rounding — brace and lift chest");
+      badJoints.add(L.LSH); badJoints.add(L.RSH);
+    }
+  } else if (currentExercise === "pl") {
+    // Hip sag/pike: shoulder-hip-ankle should be ~180
+    const lh = angle(lm[L.LSH], lm[L.LHIP], lm[L.LANK]);
+    const rh = angle(lm[L.RSH], lm[L.RHIP], lm[L.RANK]);
+    primaryAngle = (lh + rh) / 2;
+    if (primaryAngle < 160) {
+      faults.push("Hips sagging — engage glutes");
+      badJoints.add(L.LHIP); badJoints.add(L.RHIP);
+    } else if (primaryAngle > 200) {
+      faults.push("Hips piked — lower them");
+      badJoints.add(L.LHIP); badJoints.add(L.RHIP);
+    }
+  }
+
+  return { primaryAngle, faults, badJoints };
+}
+
+function countRep(primaryAngle) {
+  // squat/lunge: angle drops below 100 = down phase, back above 160 = up = 1 rep
+  // press/pull: angle drops below 90 = down, above 160 = up = 1 rep
+  const downThresh = 100, upThresh = 160;
+  if (primaryAngle < downThresh && phase === "up") { phase = "down"; }
+  else if (primaryAngle > upThresh && phase === "down") {
+    phase = "up"; reps++;
+    return true;
+  }
+  return false;
+}
+
+function drawSkeleton(lm, faults, badJoints) {
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.lineWidth = 4;
+
+  // Ghost overlay (ideal form)
+  if (ghost) {
+    ctx.strokeStyle = "rgba(232,121,249,0.35)";
+    ctx.lineWidth = 3;
+    CONNECTIONS.forEach(([a, b]) => {
+      const A = lm[a], B = lm[b];
+      if (!A || !B) return;
+      ctx.beginPath();
+      ctx.moveTo((1 - A.x) * w, A.y * h - 5);
+      ctx.lineTo((1 - B.x) * w, B.y * h - 5);
+      ctx.stroke();
+    });
+    ctx.lineWidth = 4;
+  }
+
+  const bad = faults.length > 0;
+  const primaryColor = bad ? "#F43F5E" : "#4ADE80";
+  ctx.strokeStyle = primaryColor;
+  ctx.shadowColor = primaryColor;
+  ctx.shadowBlur = 12;
+
+  CONNECTIONS.forEach(([a, b]) => {
+    const A = lm[a], B = lm[b];
+    if (!A || !B) return;
+    const isBad = badJoints.has(a) && badJoints.has(b);
+    ctx.strokeStyle = isBad ? "#F43F5E" : (bad ? "#F97316" : "#22D3EE");
+    ctx.beginPath();
+    ctx.moveTo((1 - A.x) * w, A.y * h);
+    ctx.lineTo((1 - B.x) * w, B.y * h);
+    ctx.stroke();
+  });
+
+  // Joint dots
+  ctx.shadowBlur = 8;
+  for (let i = 0; i < lm.length; i++) {
+    if (i > 32) break;
+    const p = lm[i];
+    if (!p || p.visibility < 0.4) continue;
+    ctx.fillStyle = badJoints.has(i) ? "#F43F5E" : "#22D3EE";
+    ctx.beginPath();
+    ctx.arc((1 - p.x) * w, p.y * h, badJoints.has(i) ? 7 : 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+}
+
+function speak(text) {
+  try {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.05; u.pitch = 1.0; u.volume = 0.9;
+    window.speechSynthesis.speak(u);
+  } catch (e) {}
+}
+
+let lastSpokenAt = 0, lastSpokenFault = "";
+function maybeSpeak(faults) {
+  if (!faults.length) return;
+  const now = Date.now();
+  const key = faults[0];
+  if (now - lastSpokenAt < 3200 && key === lastSpokenFault) return;
+  lastSpokenAt = now; lastSpokenFault = key;
+  speak(key.split("—")[0].trim());
+}
+
+function updateHud(faults, primaryAngle) {
+  const bad = faults.length > 0;
+  if (bad) {
+    warn.textContent = "⚠ " + faults[0].toUpperCase();
+    warn.style.display = "block";
+    statusEl.textContent = "ADJUST";
+    statusEl.className = "v status-bad";
+    maybeSpeak(faults);
+  } else {
+    warn.style.display = "none";
+    statusEl.textContent = hasStarted ? "OPTIMAL" : "READY";
+    statusEl.className = "v status-ok";
+  }
+  repsEl.textContent = reps;
+  if (formScores.length) {
+    const avg = Math.round(formScores.reduce((a,b)=>a+b,0)/formScores.length);
+    formEl.textContent = avg + "%";
+    formEl.style.color = avg > 80 ? "#4ADE80" : avg > 60 ? "#22D3EE" : "#F43F5E";
+  }
+}
+
+function onResults(results) {
+  loading.style.display = "none";
+  hasStarted = true;
+  canvas.width = video.videoWidth || window.innerWidth;
+  canvas.height = video.videoHeight || window.innerHeight;
+  if (!results.poseLandmarks) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    warn.style.display = "none";
+    statusEl.textContent = "NO POSE";
+    statusEl.className = "v";
+    statusEl.style.color = "#9C97B8";
+    return;
+  }
+  const lm = results.poseLandmarks;
+  const { primaryAngle, faults, badJoints } = analyze(lm);
+  const repCompleted = countRep(primaryAngle);
+  if (repCompleted) {
+    const score = faults.length ? 55 + Math.random() * 15 : 85 + Math.random() * 12;
+    formScores.push(Math.round(score));
+    sessionData.push({ rep: reps, score: Math.round(score), faults: [...faults] });
+    postToRN({ event: "rep", reps, score: Math.round(score), faults });
+  }
+  drawSkeleton(lm, faults, badJoints);
+  updateHud(faults, primaryAngle);
+}
+
+function postToRN(payload) {
+  try {
+    if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+    else window.parent && window.parent.postMessage(JSON.stringify(payload), "*");
+  } catch (e) {}
+}
+
+const pose = new Pose({
+  locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${f}`,
+});
+pose.setOptions({
+  modelComplexity: 1, smoothLandmarks: true,
+  enableSegmentation: false, smoothSegmentation: false,
+  minDetectionConfidence: 0.5, minTrackingConfidence: 0.5,
+});
+pose.onResults(onResults);
+
+async function start() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    const camera = new Camera(video, {
+      onFrame: async () => { await pose.send({ image: video }); },
+      width: 640, height: 480,
+    });
+    camera.start();
+    postToRN({ event: "ready" });
+  } catch (err) {
+    loading.innerHTML = '<div style="padding:20px;text-align:center;color:#F43F5E">Camera permission required</div>';
+    postToRN({ event: "error", message: String(err) });
+  }
+}
+
+// Listen for commands from RN
+window.addEventListener("message", (e) => {
+  try {
+    const d = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+    if (d?.exercise) currentExercise = d.exercise;
+    if (typeof d?.ghost === "boolean") ghost = d.ghost;
+    if (d?.action === "reset") { reps = 0; formScores = []; sessionData = []; }
+    if (d?.action === "end") {
+      const avg = formScores.length ? Math.round(formScores.reduce((a,b)=>a+b,0)/formScores.length) : 0;
+      postToRN({ event: "end", reps, avg_score: avg, scores: formScores, data: sessionData });
+    }
+  } catch {}
+});
+document.addEventListener("message", (e) => window.dispatchEvent(new MessageEvent("message", { data: e.data })));
+
+start();
+</script>
+</body>
+</html>

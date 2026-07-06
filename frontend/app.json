@@ -10,7 +10,12 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.appstaging.vtfis3"
+      "bundleIdentifier": "com.emergent.appstaging.vtfis3",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Analyze exercise form and scan food",
+        "NSMicrophoneUsageDescription": "Voice cues for form check",
+        "NSPhotoLibraryUsageDescription": "Attach food photos for macro scanning"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +23,8 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.appstaging.vtfis3"
+      "package": "com.emergent.appstaging.vtfis3",
+      "permissions": ["CAMERA", "RECORD_AUDIO", "READ_MEDIA_IMAGES"]
     },
     "web": {
       "bundler": "metro",
